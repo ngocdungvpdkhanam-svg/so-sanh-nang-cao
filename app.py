@@ -1,54 +1,82 @@
-import streamlit as st
 import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill
-import io
+from google.colab import files
+from openpyxl.utils import column_index_from_string
 
-st.title("🚀 Công cụ So sánh Excel Online")
+# 1. Tải file lên
+print("--- BƯỚC 1: TẢI FILE GỐC ---")
+uploaded_goc = files.upload()
+file_goc_name = list(uploaded_goc.keys())[0]
 
-col1, col2 = st.columns(2)
-with col1:
-    file_goc = st.file_uploader("Tải File Gốc (xlsx)", type="xlsx")
-with col2:
-    file_ss = st.file_uploader("Tải File So Sánh (xlsx)", type="xlsx")
+print("\n--- BƯỚC 2: TẢI FILE SO SÁNH ---")
+uploaded_ss = files.upload()
+file_ss_name = list(uploaded_ss.keys())[0]
 
-col_a = st.text_input("Tên cột File Gốc cần so sánh (ví dụ: Ma_Hang)", "ID")
-col_b = st.text_input("Tên cột File So Sánh cần so sánh", "ID")
+# 2. Thiết lập cấu hình so sánh
+print("\n--- BƯỚC 3: CẤU HÌNH SO SÁNH ĐA ĐIỀU KIỆN ---")
+num_conditions = int(input("Bạn muốn so sánh bao nhiêu cặp cột? (VD: 2): "))
 
-if st.button("Bắt đầu so sánh và bôi đỏ"):
-    if file_goc and file_ss:
-        # Đọc dữ liệu
-        df_goc = pd.read_excel(file_goc)
-        df_ss = pd.read_excel(file_ss)
+conditions = []
+for i in range(num_conditions):
+    print(f"\nCặp thứ {i+1}:")
+    c_goc = input(f"  - Tên cột File Gốc (VD: A): ").upper()
+    c_ss = input(f"  - Tên cột File So Sánh tương ứng (VD: B): ").upper()
+    conditions.append({'goc': c_goc, 'ss': c_ss})
+
+logic_type = input("\nChọn phép toán logic (Gõ 'AND' để tất cả phải khớp, 'OR' để chỉ cần 1 cái khớp): ").upper()
+
+# 3. Xử lý dữ liệu
+print("\nĐang xử lý dữ liệu...")
+
+# Đọc file so sánh
+wb_ss = load_workbook(file_ss_name, data_only=True)
+ws_ss = wb_ss.active
+
+# Chuyển đổi dữ liệu file so sánh thành một danh sách để tra cứu cho nhanh
+data_ss_sets = []
+for cond in conditions:
+    col_idx = column_index_from_string(cond['ss'])
+    # Lấy toàn bộ giá trị của cột đó trong file so sánh, đưa vào set để tìm kiếm cực nhanh
+    values = {str(ws_ss.cell(row=r, column=col_idx).value).strip() for r in range(1, ws_ss.max_row + 1) if ws_ss.cell(row=r, column=col_idx).value is not None}
+    data_ss_sets.append(values)
+
+# Mở file gốc để tô màu
+wb_goc = load_workbook(file_goc_name)
+ws_goc = wb_goc.active
+red_fill = PatternFill(start_color="FFFF0000", end_color="FFFF0000", fill_type="solid")
+
+count = 0
+# Duyệt từng hàng của file gốc
+for row in range(2, ws_goc.max_row + 1):
+    results = []
+    
+    # Kiểm tra từng điều kiện
+    for i in range(num_conditions):
+        col_goc_idx = column_index_from_string(conditions[i]['goc'])
+        val_goc = str(ws_goc.cell(row=row, column=col_goc_idx).value).strip()
         
-        # Lấy danh sách trùng khớp
-        trung_khop = df_ss[col_b].unique()
-        
-        # Xử lý file Excel để giữ nguyên định dạng và bôi màu
-        file_goc.seek(0)
-        wb = load_workbook(file_goc)
-        ws = wb.active
-        
-        red_fill = PatternFill(start_color="FFFF0000", end_color="FFFF0000", fill_type="solid")
-        
-        # Tìm vị trí cột A trong File Gốc
-        header = [cell.value for cell in ws[1]]
-        try:
-            col_idx = header.index(col_a) + 1
+        # Kiểm tra xem giá trị này có nằm trong cột tương ứng của file SS không
+        is_match = val_goc in data_ss_sets[i]
+        results.append(is_match)
+    
+    # Áp dụng logic AND hoặc OR
+    should_highlight = False
+    if logic_type == "AND":
+        if all(results): # Tất cả đều True
+            should_highlight = True
+    else: # Mặc định là OR
+        if any(results): # Chỉ cần 1 cái True
+            should_highlight = True
             
-            for row in range(2, ws.max_row + 1):
-                cell_value = ws.cell(row=row, column=col_idx).value
-                if cell_value in trung_khop:
-                    for cell in ws[row]:
-                        cell.fill = red_fill
-            
-            # Xuất file
-            output = io.BytesIO()
-            wb.save(output)
-            st.success("Đã xử lý xong!")
-            st.download_button("Tải file kết quả tại đây", data=output.getvalue(), file_name="ket_qua_so_sanh.xlsx")
-            
-        except ValueError:
-            st.error(f"Không tìm thấy cột '{col_a}' trong file gốc.")
-    else:
-        st.warning("Vui lòng tải lên cả 2 file.")
+    if should_highlight:
+        for cell in ws_goc[row]:
+            cell.fill = red_fill
+        count += 1
+
+# 4. Xuất kết quả
+output_name = "ket_qua_so_sanh_nang_cao.xlsx"
+wb_goc.save(output_name)
+print(f"\n--- HOÀN THÀNH ---")
+print(f"Đã tìm thấy và bôi đỏ {count} hàng thỏa mãn điều kiện {logic_type}.")
+files.download(output_name)
